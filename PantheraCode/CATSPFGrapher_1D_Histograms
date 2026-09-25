@@ -7,8 +7,8 @@ import sys
 import os 
 
 
-JSON_FILE = "/home/pixels/Workspaces/Walker/PantheraJSONs/statistics_Common_Assembly_Test_SecondPart_Fast.json"
-PLOT_DIR = "/home/pixels/Workspaces/Walker/PantheraPlots"
+JSON_FILE = "/home/pixels/Workspaces/Walker/CMS-Graphing-Kit/PantheraJSONs/statistics_Common_Assembly_Test_SecondPart_Fast.json"
+PLOT_DIR = "/home/pixels/Workspaces/Walker/CMS-Graphing-Kit/PantheraPlots"
 DATE = datetime.now().strftime("%-m-%-d-%y")
 PLOT_FOLDER = f"{PLOT_DIR}/{DATE}_1D_JsonPlots"
 os.makedirs(PLOT_FOLDER, exist_ok=True)
