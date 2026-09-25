@@ -1,0 +1,458 @@
+import json
+import matplotlib.pyplot as plt
+from datetime import datetime 
+import numpy as np
+import matplotlib.ticker as ticker
+import sys
+import os 
+
+
+JSON_FILE = "/home/pixels/Workspaces/Walker/PantheraJSONs/statistics_Common_Assembly_Test_SecondPart_Fast.json"
+PLOT_DIR = "/home/pixels/Workspaces/Walker/PantheraPlots"
+DATE = datetime.now().strftime("%-m-%-d-%y")
+PLOT_FOLDER = f"{PLOT_DIR}/{DATE}_1D_JsonPlots"
+os.makedirs(PLOT_FOLDER, exist_ok=True)
+
+
+#Enter modules you'd like to plot (Only TFPX 1x2 and 2x2 work for now)
+MODULE_NAMES = [
+    "SH0222", "SH0221", "SH0228", "SH0223", "SH0220", 
+    "SH0219", "SH0218", "SH0217", "SH0195", "SH0194"
+]
+
+
+
+def plot_iv(data, voltage = None):
+
+    if voltage is None:
+        voltages = ["120", "100", "80", "25"]
+
+        print("\nAvailable IV voltages:")
+        for i, voltage in enumerate(voltages, start=1):
+            print(f"{i}. {voltage} V")
+
+        while True:
+            selection = input("\nSelect voltage: ").strip()
+
+            try:
+                voltage = voltages[int(selection) - 1]
+                break
+
+            except (ValueError, IndexError):
+                print("Invalid selection. Please enter 1, 2, 3, or 4.")
+
+    feature = f"IVCURVE_I_{voltage}"
+    vals = []
+    negative_modules = []
+
+    for m in MODULE_NAMES:
+        if m not in data:
+            continue
+
+        try:
+            value = data[m]["actionable_summary"]["00_IVCurve_High"][feature]
+
+            if value < 0:
+                negative_modules.append(m)
+                continue
+
+            vals.append(value)
+
+        except KeyError:
+            print(f"{m}: missing {feature}")
+
+    
+    if negative_modules:
+        print(
+            f"Modules: {', '.join(negative_modules)} "
+            f"were cut due to negative feature values."
+        )
+
+    print(f"\nFound {len(vals)} module measurements.")
+
+
+    bin_width = 0.05
+    start = 0
+    end = np.ceil(max(vals) / bin_width) * bin_width
+    bins = np.arange(start, end + bin_width, bin_width)
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    counts, bins, _ = ax.hist(
+    vals,
+    bins=bins,
+    edgecolor="black"
+    )
+
+    ax.set_ylim(0, max(counts) * 1.2)
+    ax.set_xlim(0, max(bins) * 1.2)
+    ax.set_xlabel(f"Leakage Current at {voltage} V (μA)")
+    ax.set_ylabel("Modules")
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.set_title(f"Leakage Current ({voltage} V)")
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(
+        f"{PLOT_FOLDER}/IV_{voltage}V.png",
+        dpi=300
+    )
+    plt.close()
+
+
+def plot_disconnected_bumps(data):
+    test = "10_OpenBumpTest"
+    thresh = 600
+    features = ["CROSSTALK_N_DISCONNECTEDBUMPS_12", "CROSSTALK_N_DISCONNECTEDBUMPS_13"]
+
+    has_sh = any(m.startswith("SH") for m in MODULE_NAMES)
+    if has_sh:
+        features = ["CROSSTALK_N_DISCONNECTEDBUMPS_12", "CROSSTALK_N_DISCONNECTEDBUMPS_13",
+                    "CROSSTALK_N_DISCONNECTEDBUMPS_14","CROSSTALK_N_DISCONNECTEDBUMPS_15"]
+
+    vals = []
+
+    for feature in features:
+
+        for module in MODULE_NAMES:
+
+            if module not in data:
+                continue
+
+            try:
+                vals.append(
+                    data[module]["actionable_summary"][test][feature]
+                )
+
+            except KeyError:
+
+                if feature.endswith("_14") or feature.endswith("_15"):
+                    continue
+
+                print(f"{module}: missing {feature}")
+
+    if not vals:
+        print("No disconnected bump data found.")
+        return
+
+    print(f"\nFound {len(vals)} chip measurements.")
+
+    vals = [1 if v == 0 else v for v in vals]
+    bins = np.geomspace(1, 1000, 20)
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    counts, bins, _ = ax.hist(
+        vals,
+        bins=bins,
+        edgecolor="black"
+    )
+
+    ax.set_ylim(0, max(counts) * 1.2)
+    ax.set_xlim(1, 1000)
+    ax.set_xscale("log")
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(2))
+    ax.axvline(
+        thresh,
+        color="red",
+        linestyle="--",
+        label=f"Failure Threshold ({thresh})"
+    )
+    ax.set_xlabel("Disconnected Bumps")
+    ax.set_ylabel("Chips")
+    ax.set_title("Disconnected Bumps")
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(f"{PLOT_FOLDER}/DisconnectedBumps.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_masked_pixels(data, threshold=None):
+
+    thresholds = {
+        "2000": "06_NoiseScan_Th2000",
+        "1200": "11_NoiseScan_Th1200",
+        "1000": "16_NoiseScan_Th1000",
+        "950": "20_NoiseScan_Th950",
+        "900": "22_NoiseScan_Th900",
+        "850": "24_NoiseScan_Th850"
+    }
+
+    threshold_list = list(thresholds.keys())
+
+    if threshold is None:
+
+        print("\nAvailable thresholds:")
+        print("1. Combo: 2000, 1200, 1000")
+
+        for i, selected_threshold in enumerate(threshold_list, start=2):
+            print(f"{i}. {selected_threshold}")
+
+        while True:
+            selection = input("\nSelect threshold: ").strip()
+
+            try:
+                selection = int(selection)
+
+                if selection == 1:
+                    threshold = "combo"
+                    break
+
+                threshold = threshold_list[selection - 2]
+                break
+
+            except (ValueError, IndexError):
+                print(
+                    f"Invalid selection. Please enter a number from "
+                    f"1 to {len(threshold_list) + 1}."
+                )
+
+    features = [
+        "NOISE_NUM_MASKED_PIXELS_12",
+        "NOISE_NUM_MASKED_PIXELS_13"
+    ]
+
+    has_sh = any(m.startswith("SH") for m in MODULE_NAMES)
+
+    if has_sh:
+        features = [
+            "NOISE_NUM_MASKED_PIXELS_12",
+            "NOISE_NUM_MASKED_PIXELS_13",
+            "NOISE_NUM_MASKED_PIXELS_14",
+            "NOISE_NUM_MASKED_PIXELS_15"
+        ]
+
+    chip_data = {}
+
+    if threshold == "combo":
+
+        combo_thresholds = ["2000", "1200", "1000"]
+
+        for selected_threshold in combo_thresholds:
+
+            test = thresholds[selected_threshold]
+            vals = []
+
+            for feature in features:
+
+                for module in MODULE_NAMES:
+
+                    if module not in data:
+                        continue
+
+                    try:
+                        vals.append(
+                            data[module]["actionable_summary"][test][feature]
+                        )
+
+                    except KeyError:
+                        if feature.endswith("_14") or feature.endswith("_15"):
+                            continue
+
+                        print(
+                            f"{module}: missing {feature}"
+                        )
+
+            if not vals:
+                print(
+                    f"No masked pixel data found for threshold "
+                    f"{selected_threshold}."
+                )
+                continue
+
+            vals = [1 if v == 0 else v for v in vals]
+
+            chip_data[selected_threshold] = vals
+
+            print(
+                f"Threshold {selected_threshold}: "
+                f"found {len(vals)} chip measurements."
+            )
+
+        if not chip_data:
+            print("No masked pixel data found.")
+            return
+
+        bins = np.geomspace(1, 2000, 20)
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        colors = {
+            "2000": "#ffc2ac",
+            "1200": "#80c0c0",
+            "1000": "#c5b8db" 
+        }
+
+        edge_colors = {
+            "2000": "#ffaa8d",
+            "1200": "#50a8a8",
+            "1000": "#ad9bcc"
+        }
+
+        for selected_threshold in ["2000", "1200", "1000"]:
+
+            if selected_threshold not in chip_data:
+                continue
+
+            ax.hist(
+                chip_data[selected_threshold],
+                bins=bins,
+                color=colors[selected_threshold],
+                edgecolor=edge_colors[selected_threshold],
+                linewidth=1.0,
+                alpha=0.75,
+                label=f"{selected_threshold}"
+            )
+
+        ax.set_ylim(
+            0,
+            max(
+                np.histogram(
+                    vals,
+                    bins=bins
+                )[0].max()
+                for vals in chip_data.values()
+            ) * 1.2
+        )
+
+        ax.set_xlim(1, 4000)
+        ax.set_xscale("log")
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(2))
+
+        ax.axvline(
+            1452,
+            color="red",
+            linestyle="--",
+            label="Failure Threshold (1452px)"
+        )
+        ax.set_xlabel("Masked Pixels")
+        ax.set_ylabel("Chips")
+        ax.set_title("Masked Pixels (2000, 1200, 1000)")
+        ax.grid(axis="y", alpha=0.3)
+        ax.legend(loc="upper right")
+
+        plt.tight_layout()
+        plt.savefig(
+            f"{PLOT_FOLDER}/MaskedPixels_Combo.png",
+            dpi=300,
+            bbox_inches="tight"
+        )
+        plt.close()
+
+    else:
+
+        test = thresholds[threshold]
+        vals = []
+
+        for feature in features:
+
+            for module in MODULE_NAMES:
+
+                if module not in data:
+                    continue
+
+                try:
+                    vals.append(
+                        data[module]["actionable_summary"][test][feature]
+                    )
+
+                except KeyError:
+                    print(
+                        f"{module}: missing {feature}"
+                    )
+
+        if not vals:
+            print(
+                f"No masked pixel data found for threshold "
+                f"{threshold}."
+            )
+            return
+
+        print(
+            f"\nFound {len(vals)} chip measurements."
+        )
+
+        vals = [1 if v == 0 else v for v in vals]
+        bins = np.geomspace(1, 2000, 20)
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        counts, bins, _ = ax.hist(
+            vals,
+            bins=bins,
+            edgecolor="black"
+        )
+
+        ax.set_ylim(0, max(counts) * 1.2)
+        ax.set_xlim(1, 4000)
+        ax.set_xscale("log")
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax.axvline(
+            1452,
+            color="red",
+            linestyle="--",
+            label="Failure Threshold (1452px)"
+        )
+        ax.set_xlabel("Masked Pixels")
+        ax.set_ylabel("Chips")
+        ax.set_title(f"Masked Pixels (Threshold {threshold})")
+        ax.grid(axis="y", alpha=0.3)
+        ax.legend(loc="upper right")
+        
+        plt.tight_layout()
+        plt.savefig(
+            f"{PLOT_FOLDER}/MaskedPixels_Th{threshold}.png",
+            dpi=300,
+            bbox_inches="tight"
+        )
+        plt.close()
+
+
+#def plot_bad_core_columns(data):
+#    test = 
+
+
+with open(JSON_FILE) as f:
+    data = json.load(f)
+
+missing = [m for m in MODULE_NAMES if m not in data]
+
+if missing:
+    print("The following modules were not found:")
+    print(", ".join(missing))
+
+    if input(
+        "Do you still want to proceed? (y/n): "
+    ).strip().lower() != "y":
+        sys.exit()
+
+print("Available tests:")
+print("1. IV Curve")
+print("2. Disconnected Bumps")
+print("3. Masked Pixels")
+print("4. All Tests")
+
+sel = input(
+    "Enter the number corresponding to the desired test: "
+).strip()
+
+if sel == "1":
+    plot_iv(data)
+
+elif sel == "2":
+    plot_disconnected_bumps(data)
+
+elif sel == "3":
+    plot_masked_pixels(data)
+
+elif sel == "4":
+
+    for voltage in ["120", "100", "80", "25"]:
+        plot_iv(data, voltage)
+
+    plot_disconnected_bumps(data)
+
+    for threshold in ["2000", "1200", "1000", "950", "900", "850"]:
+        plot_masked_pixels(data, threshold)
+
+else:
+    print("Invalid selection. Exiting.")
+    sys.exit()
